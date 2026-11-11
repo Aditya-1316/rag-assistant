@@ -1,0 +1,5 @@
+pydantic>=2.12.5
+pydantic-settings>=2.12.0
+requests>=2.32.0
+streamlit>=1.52.2
+

@@ -1,6 +1,13 @@
+import sys
+from pathlib import Path
 import streamlit as st
 import requests
-from chatbot_ui.core.config import config
+
+try:
+    from chatbot_ui.core.config import config
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from chatbot_ui.core.config import config
 
 
 def api_call(method, url, **kwargs):

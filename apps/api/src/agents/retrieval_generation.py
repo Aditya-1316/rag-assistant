@@ -2,13 +2,23 @@ import os
 import time
 import logging
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from qdrant_client import QdrantClient
 from api.core.config import config
 
 logger = logging.getLogger(__name__)
 
-gemini_client = genai.Client(api_key=config.GOOGLE_API_KEY)
+gemini_client = genai.Client(
+    api_key=config.GOOGLE_API_KEY,
+    http_options=types.HttpOptions(
+        retry_options=types.HttpRetryOptions(
+            attempts=2,
+            initial_delay=0.5,
+            max_delay=2.0,
+        )
+    ),
+)
 
 # Reuse Qdrant client connection globally
 qdrant_url = config.QDRANT_URL or ("http://qdrant:6333" if os.path.exists("/.dockerenv") else "http://localhost:6333")
@@ -103,15 +113,45 @@ Question:
     return prompt
 
 
-def generate_answer(prompt: str, model: str = "gemini-3.8-flash") -> str:
-    response = gemini_client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_level="low"),
+MODEL_CANDIDATES = [
+    (
+        "gemini-3.8-flash",
+        types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_level="low")
         ),
-    )
-    return response.text
+    ),
+    ("gemini-3.5-flash-lite", None),
+    ("gemini-3.1-flash-lite", None),
+]
+
+
+def generate_answer(prompt: str, model: str | None = None) -> str:
+    """Generate an answer with automatic fast fallback when a Gemini model is overloaded."""
+    candidates = MODEL_CANDIDATES
+    if model and all(name != model for name, _ in MODEL_CANDIDATES):
+        candidates = [(model, None), *MODEL_CANDIDATES]
+
+    last_error: Exception | None = None
+    for model_name, gen_config in candidates:
+        try:
+            print(f"--> [3/3] Trying Gemini model '{model_name}'...", flush=True)
+            response = gemini_client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=gen_config,
+            )
+            return response.text
+        except genai_errors.APIError as exc:
+            last_error = exc
+            if exc.code in (404, 429, 500, 503):
+                print(
+                    f"--> [3/3] Model '{model_name}' unavailable ({exc.code}), trying fallback...",
+                    flush=True,
+                )
+                continue
+            raise
+
+    raise last_error  # type: ignore[misc]
 
 
 def rag_pipeline(question, top_k=3):
@@ -123,7 +163,6 @@ def rag_pipeline(question, top_k=3):
     preprocessed_context = process_context(retrieved_context)
     prompt = build_prompt(preprocessed_context, question)
 
-    print(f"--> [3/3] Sending prompt to Gemini (gemini-3.8-flash)...", flush=True)
     t_gen_start = time.time()
     answer = generate_answer(prompt)
     t_gen = time.time() - t_gen_start

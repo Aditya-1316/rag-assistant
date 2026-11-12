@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 from api.models import RAGRequest, RAGResponse
-from agents.retrieval_generation import rag_pipeline
+from agents.retrieval_generation import rag_pipeline_with_products
 import logging
 
 
@@ -19,11 +19,12 @@ def chat(
     payload: RAGRequest
 ) -> RAGResponse:
 
-    answer = rag_pipeline(payload.query) 
+    answer, products = rag_pipeline_with_products(payload.query)
 
     return RAGResponse(
         request_id=request.state.request_id,
-        answer=answer
+        answer=answer,
+        products=products,
     )
 
 api_router = APIRouter()

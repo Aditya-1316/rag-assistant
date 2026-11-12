@@ -58,18 +58,41 @@ def retrieve_data(query, qdrant_client, k=3):
     retrieved_context = []
     similarity_scores = []
     retrieved_context_ratings = []
+    products = []
 
     for result in results.points:
-        retrieved_context_ids.append(result.payload["parent_asin"])
-        retrieved_context.append(result.payload["description"])
-        retrieved_context_ratings.append(result.payload["average_rating"])
+        payload = result.payload or {}
+        description = payload.get("description", "")
+        title = description.split("\n", 1)[0].strip()
+        if len(title) > 90:
+            title = title[:87].rsplit(" ", 1)[0] + "..."
+
+        parent_asin = payload.get("parent_asin", "")
+        rating = payload.get("average_rating")
+        price = payload.get("price")
+
+        retrieved_context_ids.append(parent_asin)
+        retrieved_context.append(description)
+        retrieved_context_ratings.append(rating)
         similarity_scores.append(result.score)
+        products.append(
+            {
+                "parent_asin": parent_asin,
+                "title": title or parent_asin,
+                "price": price,
+                "average_rating": rating,
+                "rating_number": payload.get("rating_number"),
+                "image": payload.get("image"),
+                "score": result.score,
+            }
+        )
 
     return {
         "retrieved_context_ids": retrieved_context_ids,
         "retrieved_context": retrieved_context,
         "retrieved_context_ratings": retrieved_context_ratings,
         "similarity_scores": similarity_scores,
+        "products": products,
     }
 
 
@@ -77,14 +100,12 @@ def retrieve_data(query, qdrant_client, k=3):
 def process_context(context, max_chars_per_item=800):
     formatted_context = ""
 
-    for id, chunk, rating in zip(
-        context["retrieved_context_ids"],
-        context["retrieved_context"],
-        context["retrieved_context_ratings"],
-    ):
+    for item, chunk in zip(context.get("products", []), context["retrieved_context"]):
         desc = (chunk[:max_chars_per_item] + "...") if len(chunk) > max_chars_per_item else chunk
+        price_str = f"${item['price']}" if item.get("price") is not None else "N/A"
         formatted_context += (
-            f"- ID: {id}, rating: {rating}, description: {desc}\n"
+            f"- ID: {item['parent_asin']}, price: {price_str}, "
+            f"rating: {item.get('average_rating')}, description: {desc}\n"
         )
 
     return formatted_context
@@ -158,7 +179,8 @@ def generate_answer(prompt: str, model: str | None = None) -> str:
     raise last_error  # type: ignore[misc]
 
 
-def rag_pipeline(question, top_k=3):
+def rag_pipeline_with_products(question: str, top_k: int = 3) -> tuple[str, list[dict]]:
+    """Run the RAG pipeline and return both the generated answer and retrieved product metadata."""
     t_start = time.time()
     print(f"\n==================== NEW RAG QUERY ====================", flush=True)
     print(f"Query: {question}", flush=True)
@@ -175,4 +197,9 @@ def rag_pipeline(question, top_k=3):
     t_total = time.time() - t_start
     print(f"==== TOTAL RAG TIME: {t_total:.2f}s ====\n", flush=True)
 
+    return answer, retrieved_context.get("products", [])
+
+
+def rag_pipeline(question: str, top_k: int = 3) -> str:
+    answer, _ = rag_pipeline_with_products(question, top_k=top_k)
     return answer

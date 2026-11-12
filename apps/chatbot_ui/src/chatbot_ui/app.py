@@ -10,6 +10,13 @@ except ModuleNotFoundError:
     from chatbot_ui.core.config import config
 
 
+st.set_page_config(
+    page_title="RAG Shopping Assistant",
+    page_icon="🛍️",
+    layout="centered",
+)
+
+
 def get_api_url() -> str:
     """Resolve the API base URL from Streamlit secrets or environment config."""
     try:
@@ -53,38 +60,85 @@ def api_call(method, url, **kwargs):
         _show_error_popup(f"An unexpected error occurred: {str(e)}")
         return False, {"message": str(e)}
 
-## Lets create a sidebar with a dropdown for the model list and providers
-with st.sidebar:
-    st.title("Settings")
-
-    #Dropdown for model
-    provider = st.selectbox("Provider", ["OpenAI", "Groq", "Google"])
-    if provider == "OpenAI":
-        model_name = st.selectbox("Model", ["gpt-5-nano", "gpt-5-mini"])
-    elif provider == "Groq":
-        model_name = st.selectbox("Model", ["llama-3.3-70b-versatile"])
-    else:
-        model_name = st.selectbox("Model", ["gemini-2.5-flash"])
-
-    # Save provider and model to session state
-    st.session_state.provider = provider
-    st.session_state.model_name = model_name
-
+SAMPLE_QUESTIONS = [
+    "Suggest some cool earphones",
+    "What laptops are available in stock?",
+    "Recommend wireless headphones with good ratings",
+]
 
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I assist you today?"}]
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Hello! Ask me anything about the products in stock."}
+    ]
 
+with st.sidebar:
+    st.title("🛍️ Shopping Assistant")
+    st.caption("Ask questions about products in our Amazon catalog using semantic search + Gemini.")
+
+    st.divider()
+    st.subheader("Try a sample question")
+    for sample in SAMPLE_QUESTIONS:
+        if st.button(sample, use_container_width=True):
+            st.session_state["pending_prompt"] = sample
+
+    st.divider()
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = [
+            {"role": "assistant", "content": "Hello! Ask me anything about the products in stock."}
+        ]
+        st.rerun()
+
+    st.caption("Powered by FastAPI · Qdrant Cloud · Google Gemini")
+
+
+def render_products(products: list[dict]) -> None:
+    """Display retrieved Amazon product cards in a horizontal grid."""
+    if not products:
+        return
+
+    st.markdown("**Matched Products:**")
+    cols = st.columns(len(products))
+    for col, product in zip(cols, products):
+        with col:
+            with st.container(border=True):
+                if product.get("image"):
+                    st.image(product["image"], width=160)
+                st.markdown(f"**{product.get('title', product.get('parent_asin', 'Product'))}**")
+
+                price = product.get("price")
+                price_str = f"${price:,.2f}" if price is not None else "Price N/A"
+                rating = product.get("average_rating")
+                reviews = product.get("rating_number")
+                rating_str = f"⭐ {rating}" if rating is not None else ""
+                if reviews is not None and rating_str:
+                    rating_str += f" ({reviews})"
+
+                meta = " · ".join(part for part in (price_str, rating_str) if part)
+                if meta:
+                    st.caption(meta)
+
+                asin = product.get("parent_asin")
+                if asin:
+                    st.markdown(f"[View on Amazon](https://www.amazon.com/dp/{asin})")
+
+
+st.title("🛍️ AI Shopping Assistant")
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if message["role"] == "assistant" and message.get("products"):
+            render_products(message["products"])
 
+user_input = st.chat_input("Ask about a product (e.g., laptops, earphones)...")
+prompt = st.session_state.pop("pending_prompt", None) or user_input
 
-if prompt := st.chat_input("Hello! How can I assist you today?"):
+if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    products: list[dict] = []
     with st.chat_message("assistant"):
         with st.spinner("Searching products and generating answer..."):
             success, response_data = api_call(
@@ -94,7 +148,16 @@ if prompt := st.chat_input("Hello! How can I assist you today?"):
             )
             if success and "answer" in response_data:
                 answer = response_data["answer"]
+                products = response_data.get("products", [])
             else:
-                answer = response_data.get("answer") or response_data.get("message") or response_data.get("detail") or "Sorry, could not get a response from the RAG service."
+                answer = (
+                    response_data.get("answer")
+                    or response_data.get("message")
+                    or response_data.get("detail")
+                    or "Sorry, could not get a response from the RAG service."
+                )
             st.write(answer)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+            render_products(products)
+    st.session_state.messages.append(
+        {"role": "assistant", "content": answer, "products": products}
+    )

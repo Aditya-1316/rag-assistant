@@ -10,6 +10,16 @@ except ModuleNotFoundError:
     from chatbot_ui.core.config import config
 
 
+def get_api_url() -> str:
+    """Resolve the API base URL from Streamlit secrets or environment config."""
+    try:
+        if "API_URL" in st.secrets:
+            return str(st.secrets["API_URL"]).strip().rstrip("/")
+    except Exception:
+        pass
+    return config.API_URL.strip().rstrip("/")
+
+
 def api_call(method, url, **kwargs):
 
     def _show_error_popup(message):
@@ -20,6 +30,7 @@ def api_call(method, url, **kwargs):
         }
 
     try:
+        kwargs.setdefault("timeout", 90)
         response = getattr(requests, method)(url, **kwargs)
 
         try:
@@ -32,9 +43,9 @@ def api_call(method, url, **kwargs):
 
         return False, response_data
 
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as e:
         _show_error_popup("Connection error. Please check your network connection.")
-        return False, {"message": "Connection error"}
+        return False, {"message": f"Connection error reaching {url}: {e}"}
     except requests.exceptions.Timeout:
         _show_error_popup("The request timed out. Please try again later.")
         return False, {"message": "Request timeout"}
@@ -78,7 +89,7 @@ if prompt := st.chat_input("Hello! How can I assist you today?"):
         with st.spinner("Searching products and generating answer..."):
             success, response_data = api_call(
                 "post",
-                f"{config.API_URL.rstrip('/')}/rag/",
+                f"{get_api_url()}/rag/",
                 json={"query": prompt}
             )
             if success and "answer" in response_data:

@@ -6,7 +6,7 @@ An end-to-end **Retrieval-Augmented Generation (RAG)** shopping assistant that a
 
 ## 🌐 Live Demo
 
-- **Web App (Streamlit UI):** `https://YOUR_STREAMLIT_APP_URL.streamlit.app` *(replace with your Streamlit Cloud URL)*
+- **Web App (Streamlit UI):** https://rag-assistant-js2vnzfyjsblx9u5fpus9z.streamlit.app/
 - **API Docs (Swagger UI):** [https://rag-api-iezs.onrender.com/docs](https://rag-api-iezs.onrender.com/docs)
 
 ---

@@ -12,11 +12,10 @@ logger = logging.getLogger(__name__)
 gemini_client = genai.Client(
     api_key=config.GOOGLE_API_KEY,
     http_options=types.HttpOptions(
+        timeout=15000,
         retry_options=types.HttpRetryOptions(
-            attempts=2,
-            initial_delay=0.5,
-            max_delay=2.0,
-        )
+            attempts=1,
+        ),
     ),
 )
 
@@ -114,19 +113,19 @@ Question:
 
 
 MODEL_CANDIDATES = [
+    ("gemini-3.5-flash-lite", None),
+    ("gemini-3.1-flash-lite", None),
     (
         "gemini-3.8-flash",
         types.GenerateContentConfig(
             thinking_config=types.ThinkingConfig(thinking_level="low")
         ),
     ),
-    ("gemini-3.5-flash-lite", None),
-    ("gemini-3.1-flash-lite", None),
 ]
 
 
 def generate_answer(prompt: str, model: str | None = None) -> str:
-    """Generate an answer with automatic fast fallback when a Gemini model is overloaded."""
+    """Generate an answer with fast 15s timeout and automatic fallback across Gemini models."""
     candidates = MODEL_CANDIDATES
     if model and all(name != model for name, _ in MODEL_CANDIDATES):
         candidates = [(model, None), *MODEL_CANDIDATES]
@@ -143,13 +142,18 @@ def generate_answer(prompt: str, model: str | None = None) -> str:
             return response.text
         except genai_errors.APIError as exc:
             last_error = exc
-            if exc.code in (404, 429, 500, 503):
-                print(
-                    f"--> [3/3] Model '{model_name}' unavailable ({exc.code}), trying fallback...",
-                    flush=True,
-                )
-                continue
-            raise
+            if exc.code in (400, 401, 403):
+                raise
+            print(
+                f"--> [3/3] Model '{model_name}' failed ({exc.code}), trying fallback...",
+                flush=True,
+            )
+        except Exception as exc:
+            last_error = exc
+            print(
+                f"--> [3/3] Model '{model_name}' timed out/errored ({type(exc).__name__}), trying fallback...",
+                flush=True,
+            )
 
     raise last_error  # type: ignore[misc]
 
